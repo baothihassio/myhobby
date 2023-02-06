@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <!-- Required meta tags -->
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no" />
+    <meta http-equiv="content-type" content="text/html; charset=UTF-8" />
+
+    <title></title>
+
+    <!-- Required Stylesheets -->
+    <link type="text/css" rel="stylesheet" href="bootstrap.min.css" />
+    <link type="text/css" rel="stylesheet" href="bootstrap-vue.css" />
+
+    <!-- Load polyfills to support older browsers -->
+    <script src="https://polyfill.io/v3/polyfill.min.js?features=es2015%2CIntersectionObserver"></script>
+    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"
+        integrity="sha384-/KNQL8Nu5gCHLqwqfQjA689Hhoqgi2S84SNUxC3roTe4EhJ9AfLkp8QiQcU8AMzI"
+        crossorigin="anonymous"></script>
+
+    <!-- Required scripts -->
+
+    <script src="vue.js"></script>
+    <script src="bootstrap-vue.js"></script>
+    <script>
+
+    </script>
+</head>
+
+<body>
+    <!-- Our application root element -->
+
+    <div id="app">
+        <b-container class="text-center">
+
+            <b-overlay :show="show" rounded="sm">
+                <b-row>
+                    
+                </b-row>
+            </b-overlay>
+        </b-container>
+
+    </div>
+
+    <!-- Start running your app -->
+    <script>
+
+        window.app = new Vue({
+            el: '#app',
+            data: {
+
+            },
+            methods: {
+                getListSymbol() {
+                    let url = 'getlistsymbol'
+                    this.show = true;
+                    fetch(url).then(data => data.json()).then(data => {
+                        this.listSymbol = data;
+                        this.dataReady = true;
+                        this.show = false;
+                    })
+                }
+            },
+            mounted() {
+                this.getListSymbol();
+            },
+            computed: {
+
+            }
+        })
+    </script>
+</body>
+
+</html>

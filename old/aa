@@ -1,0 +1,628 @@
+const express = require('express')
+const app = express()
+const port = 3000
+const bodyParser = require('body-parser');
+app.use(bodyParser.json());
+app.use(bodyParser.urlencoded());
+// in latest body-parser use like below.
+app.use(bodyParser.urlencoded({ extended: true }));
+var util = require('./util')
+// in latest body-parser use like below.
+var compression = require('compression');
+app.use(compression({
+    level: 9
+}));
+const server = require('http').createServer();
+const io = require('socket.io')(server, {
+    cors: {
+        origin: "*",
+        methods: ["GET", "POST"]
+    },
+    httpCompression: {
+        // Engine.IO options
+        threshold: 2048, // defaults to 1024
+        // Node.js zlib options
+        chunkSize: 8 * 1024, // defaults to 16 * 1024
+        windowBits: 14, // defaults to 15
+        memLevel: 7, // defaults to 8
+    },
+    perMessageDeflate: {
+        threshold: 2048, // defaults to 1024
+
+        zlibDeflateOptions: {
+            chunkSize: 16 * 1024, // defaults to 16 * 1024
+        },
+        zlibInflateOptions: {
+            windowBits: 14, // defaults to 15
+            memLevel: 7, // defaults to 8
+        },
+
+        clientNoContextTakeover: true, // defaults to negotiated value.
+        serverNoContextTakeover: true, // defaults to negotiated value.
+        serverMaxWindowBits: 10, // defaults to negotiated value.
+
+        concurrencyLimit: 20, // defaults to 10
+    }
+});
+io.on('connection', client => {
+    console.log('user connect!')
+
+    client.on('getdata', arg => {
+        let params = JSON.parse(arg)
+        console.log(params)
+        if (params.limit) {
+            if (params.name && params.timeframe) {
+                knex('scan').where({ name: params.name, timeframe: params.timeframe }).select().then(data => {
+                    let _data = data[0];
+                    let result = JSON.parse(_data.result)
+                    let limit = parseInt(params.limit);
+                    let newData = []
+                    for (let i = result.length - limit; i < result.length; i++) {
+                        newData.push(result[i])
+                    }
+                    sendResult(client, {
+                        id: _data.id,
+                        name: _data.name,
+                        timeframe: _data.timeframe,
+                        result: JSON.stringify(newData)
+                    })
+
+                })
+            } else {
+                knex('scan').select().then(data => {
+
+                    for (let a = 0; a < data.length; a++) {
+                        let _data = data[a]
+                        let result = JSON.parse(_data.result)
+                        let limit = parseInt(params.limit);
+                        let newData = []
+                        for (let i = result.length - limit; i < result.length; i++) {
+                            newData.push(result[i])
+                        }
+                        data[a].result = JSON.stringify(newData)
+                    }
+                    sendResult(client, data)
+
+                })
+            }
+        } else {
+            if (params.name && params.timeframe) {
+                knex('scan').where({ name: params.name, timeframe: params.timeframe }).select().then(data => {
+
+                    sendResult(client, JSON.stringify(data))
+                })
+            } else {
+                knex('scan').select().then(data => {
+                    sendResult(client, JSON.stringify(data))
+                })
+            }
+        }
+
+    })
+    client.on('checkready', arg => {
+        if (listLastData.length > 0) {
+            client.emit("checkready", JSON.stringify({ status: true }))
+        } else {
+            client.emit("checkready", JSON.stringify({ status: false }))
+        }
+    })
+
+    client.on('getlistsymbol', () => {
+        getListSupport().then(data => {
+            sendResult(client, data)
+        })
+    })
+    client.on('getalldb', () => {
+        knex('scan').select().then(data => {
+            sendResult(client, data)
+        })
+    })
+    client.on('getlastsignal', () => {
+        sendResult(client, listLastData)
+    })
+
+    client.on('disconnect', () => { console.log('user disconnect') });
+});
+function sendResult(client, data) {
+    client.emit("result", JSON.stringify(data))
+}
+server.listen(3001);
+app.set("view engine", "ejs");
+app.set("views", "./views");
+
+app.use(express.static('public1'))
+const morgan = require('morgan')
+app.use(morgan('tiny'))
+var stringLog = [];
+var countMain = 0;
+const fs = require('fs');
+var urlWsBinance = `wss://fstream.binance.com/ws/!ticker@arr`
+const knex = require('knex')({
+    client: 'sqlite3', // or 'better-sqlite3'
+    connection: {
+        filename: "./mydb.db"
+    },
+    useNullAsDefault: true
+});
+const Binance = require('node-binance-api');
+const binance = new Binance({
+    recvWindow: 60000, // Set a higher recvWindow to increase response timeout
+})
+var listLastData = []
+var isNewRun = true;
+var isConfigChange = false;
+var timeframe = '1h'
+var timeout = 60
+const ta = require('ta.js')
+var listSymbol = [];
+var WebSocketClient = require('websocket').client;
+var client = new WebSocketClient();
+
+client.on('connectFailed', function (error) {
+    console.log('Connect Error: ' + error.toString());
+});
+
+client.on('connect', function (connection) {
+    console.log('Binance Connected');
+    connection.on('message', function (message) {
+        if (listLastData.length > 0) {
+            let allData = JSON.parse(message.utf8Data)
+            //có dữ liệu
+            listLastData.forEach(i => {
+                let item = allData.find(a => a.s === i.name)
+                let lastData = i.lastData;
+                //  checkDataWithSignal(item, lastData)
+            })
+        }
+
+    });
+
+});
+
+client.connect(urlWsBinance);
+//database
+var admin = require("firebase-admin");
+var serviceAccount = require("./private.json");
+
+admin.initializeApp({
+    credential: admin.credential.cert(serviceAccount),
+});
+
+function checkDataWithSignal(lastTick, lastStatus) {
+    //nhận giá của binance realtime
+    //quy tắc :
+    /*
+    1.vào lệnh khi giá pull về đường t2
+    2.stoch, >80 <20
+    3.giá thoát ra ngoài BB 
+    4.cây nne61 hiện tại là cây nến lưởng lự. doji, 
+    5.nếu gặp cây full lực thì chờ đủ 3 cây
+    6.sl hơn đỉnh cũ
+    */
+    // let symbol = lastTick.s
+    // let open = parseFloat(lastTick.o)
+    // let high = parseFloat(lastTick.h)
+    // let low = parseFloat(lastTick.l)
+    // let close = parseFloat(lastTick.c)
+
+
+    // let { t1, t2, lastSignal, signalBegin, signalCountBar } = lastStatus.mybot14;
+
+    // if (lastSignal === 'SHORT') {
+    //     if (close >= t1) {
+    //         pushToAlert({ symbol, lastSignal })
+    //     }
+    // }
+    //chỉ cần kiểm tra giá có chạm tới t2,t1 hay không
+
+}
+
+const firestore = admin.firestore();
+async function getFuturePrice(_timeframe) {
+    console.log('============START============')
+    stringLog = []
+    console.time()
+    //làm mới mydb
+    if (isNewRun) {
+        await knex('scan').del();
+    }
+
+    countMain++;
+    let resultList = await getListSupport();
+    listSymbol = resultList;
+    let TokenList = []
+    console.log('Begin fetch data ' + countMain)
+    listSymbol.forEach(i => {
+        TokenList.push(handleData(i.name, _timeframe));
+    })
+    Promise.all(TokenList).then(async data => {
+        console.table(stringLog)
+
+        isNewRun = false
+        if (isConfigChange) {
+            console.log("Config change, start again!")
+            await knex('scan').del()
+        }
+
+        isConfigChange = false;
+        setTimeout(() => {
+            console.log('============END============')
+            console.timeEnd();
+            getFuturePrice(timeframe)
+        }, 1000 * timeout)
+    })
+
+
+}
+async function getIndicators(ticks, symbol, timeframe) {
+    return new Promise(async (resolve, reject) => {
+        //ta.js, data = []
+        let dataClose = []
+        let dataCloseVolume = []
+        let dataLow = []
+        let dataHigh = []
+        let dataVolume = []
+        let dataOHCL = []
+        //technical analizec
+        let ta_high = []
+        let ta_low = []
+        let ta_close = []
+        let ta_open = []
+        let ta_high_close_low = []
+        let dataForOpenAI = [];//close,high to object
+        ticks.ticks.map(i => {
+            let [time, open, high, low, close, volume, closeTime, assetVolume, trades, buyBaseVolume, buyAssetVolume, ignored] = i;
+            //ta.js
+            dataOHCL.push({
+                o: parseFloat(open),
+                h: parseFloat(high),
+                c: parseFloat(close),
+                l: parseFloat(low),
+                t: parseFloat(time),
+                v: parseFloat(volume)
+            })
+            dataHigh.push(parseFloat(high))
+            dataLow.push(parseFloat(low))
+            dataClose.push(parseFloat(close))
+            dataCloseVolume.push(parseFloat(time))
+            dataVolume.push(parseFloat(volume))
+            //techincal analize
+            ta_high.push(parseFloat(high))
+            ta_low.push(parseFloat(low))
+            ta_open.push(parseFloat(open))
+            ta_close.push(parseFloat(close))
+            ta_high_close_low.push([parseFloat(high), parseFloat(close), parseFloat(low)])
+            //data object
+            dataForOpenAI.push({
+                open: parseFloat(open),
+                high: parseFloat(high),
+                close: parseFloat(close),
+                low: parseFloat(low),
+            })
+        })
+        let sl = util.findSL(dataLow, dataCloseVolume, dataVolume, 2, 2)
+        let sh = util.findSH(dataHigh, dataCloseVolume, dataVolume, 2, 2)
+
+        //Example usage:
+        // let combinedList = [...sl, ...sh];
+        //  let keyLevels = util.newfindKeyLevels(dataClose, sl, sh, 14);
+
+        //        let keyLevel1 = util.findKeyLevels(util.combineResults(sl, sh))
+        //       let analize = util.analyzeKeyLevels(keyLevel1, dataOHCL, 3)
+        // let keyLevel = util.findKeyLevels(combinedList);
+        // let kl1 = util.detectKeyLevels(sl, sh, 1, dataOHCL, dataOHCL);
+        let a = util.detectBoCChoch(sl, sh, dataOHCL, dataOHCL, 0.1)
+
+        let findSR = util.supres(ta_low, ta_high, 1, 1.5, 2, symbol);
+        let ema = await util.getEMA(dataClose, 14)
+        let ema21 = await util.getEMA(dataClose, 21)
+        let ema34 = await util.getEMA(dataClose, 34)
+        let ema50 = await util.getEMA(dataClose, 50)
+        let ema89 = await util.getEMA(dataClose, 89)
+        let ema200 = await util.getEMA(dataClose, 200)
+        let rsi = await util.getRSI(dataClose, 14)
+        let bb = await util.getBB(dataClose, 20)
+        let cci = util.getCCI({ high: ta_high, close: ta_close, low: ta_open, open: ta_open }, 20)
+        let mybot89 = util.getMyBot(dataClose, 89, 2, dataCloseVolume);
+        let mybot34 = util.getMyBot(dataClose, 34, 2, dataCloseVolume);
+        let mybot14 = util.getMyBot(dataClose, 14, 2, dataCloseVolume);
+        let newDataframe = []
+
+        //check cross of t1,t2
+        //count singal LONG or SHORT
+        for (let i = 0; i < ticks.ticks.length; i++) {
+            // time: '2018-12-22', open: 75.16, high: 82.84, low: 36.16, close: 45.72
+            let [time, open, high, low, close, volume, closeTime, assetVolume, trades, buyBaseVolume, buyAssetVolume, ignored] = ticks.ticks[i]
+            let _time = parseFloat(time)
+            let _sh = sh.find(i => i.time === _time)
+            let _sl = sl.find(i => i.time === _time)
+
+            newDataframe.push({
+                sh: (_sh) ? _sh : 0,
+                sl: (_sl) ? _sl : 0,
+                open: parseFloat(open),
+                high: parseFloat(high),
+                close: parseFloat(close),
+                low: parseFloat(low),
+                time: (parseFloat(time) + 25200000),
+                volume: parseFloat(volume),
+                ema14: ema.result[i],
+                ema21: ema21.result[i],
+                ema34: ema34.result[i],
+                ema50: ema50.result[i],
+                ema89: ema89.result[i],
+                ema200: ema200.result[i],
+                rsi: rsi.result[i],
+                cci: cci.result[i],
+                mybot14: { t1: mybot14.result.t1[i], t2: mybot14.result.t2[i], lastSignal: mybot14.result.lastSignal, signalBegin: mybot14.result.signalBegin, signalCountBar: mybot14.result.signalCountBar, signalAt: mybot14.result.signalAt },
+                mybot89: { t1: mybot89.result.t1[i], t2: mybot89.result.t2[i], lastSignal: mybot89.result.lastSignal, signalBegin: mybot89.result.signalBegin, signalCountBar: mybot89.result.signalCountBar, signalAt: mybot89.result.signalAt },
+                mybot34: { t1: mybot34.result.t1[i], t2: mybot34.result.t2[i], lastSignal: mybot89.result.lastSignal, signalBegin: mybot34.result.signalBegin, signalCountBar: mybot34.result.signalCountBar, signalAt: mybot34.result.signalAt },
+                bb: bb.result[i],
+                sr: findSR
+            })
+        }
+        //write to db
+        listLastData.push({
+            name: symbol, lastData: newDataframe[newDataframe.length - 2], timeframe
+        })
+        await insertData({ name: symbol, result: newDataframe, timeframe })
+
+        resolve('ok')
+        //   console.log(mybot)
+    })
+}
+
+async function getData(symbol, time) {
+    return new Promise((resolve, reject) => {
+        try {
+            binance.candlesticks(symbol, time, (error, ticks, symbol) => {
+                if (error) {
+                    // console.log(error)
+                    reject(error)
+                } else {
+                    if (ticks) {
+                        let lastClose = []
+                        ticks.forEach(i => {
+                            let [time, open, high, low, close, volume, closeTime, assetVolume, trades, buyBaseVolume, buyAssetVolume, ignored] = i;
+                            lastClose.push(close)
+                        })
+                        let last_tick = ticks[ticks.length - 1]
+                        resolve({
+                            "name": symbol,
+                            "time": time,
+                            "last_tick": last_tick,
+                            "ticks": [...ticks]
+                        })
+                    } else {
+                        resolve(null)
+                        reject(error)
+                    }
+
+                }
+            }, { limit: 1000 })
+        }
+        catch (err) {
+            console.log('**** fetch error - limit IP')
+            // console.log(err)
+            reject(err)
+        }
+
+    }).catch((err) => {
+        // console.log(err)
+    });
+}
+async function handleData(symbol, time) {
+    return new Promise(async (resolve, reject) => {
+        let data = await getData(symbol, time);
+        if (data) {
+            await getIndicators(data, symbol, time);
+            resolve('ok')
+        } else {
+            resolve(null)
+        }
+
+    })
+    //calc and push to db
+}
+function main() {
+    getFuturePrice(timeframe)
+}
+//ta
+
+main();
+//  "public" off of current is root
+app.use(express.static('public'))
+
+//saveload
+
+
+
+//charts_storage_url/charts_storage_api_version/charts?client=client_id&user=user_id
+
+app.get('/', (req, res) => {
+    res.render('index', {})
+})
+app.get('/b', (req, res) => {
+    res.render('b', {})
+})
+app.post('/setlistsymbol', (req, res) => {
+    let listsymbol = req.body.listSymbol;
+    firestore.collection("list").doc("listScan").update({ list: JSON.stringify(listsymbol) }).then(data => {
+        isConfigChange = true;
+        res.end('ok')
+    });
+})
+app.get('/getListSymbol', (req, res) => {
+    getListSupport().then(data => {
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify(data))
+    })
+})
+app.get('/plot', (req, res) => {
+    res.render('plot', {
+        name: req.query.name,
+        timeframe: req.query.timeframe,
+        limit: (req.query.limit) ? req.query.limit : "null",
+        showRSI: (req.query.rsi) ? req.query.rsi : false,
+        showCCI: (req.query.cci) ? req.query.cci : false,
+        show89: (req.query.i_89) ? req.query.i_89 : false,
+        show34: (req.query.i_34) ? req.query.i_34 : false,
+        show14: (req.query.i_14) ? req.query.i_14 : false,
+        showEMA14: (req.query.ema_14) ? req.query.ema_14 : false,
+        showEMA21: (req.query.ema_21) ? req.query.ema_21 : false,
+        showEMA34: (req.query.ema_34) ? req.query.ema_34 : false,
+        showEMA50: (req.query.ema_50) ? req.query.ema_50 : false,
+        showEMA89: (req.query.ema_89) ? req.query.ema_89 : false,
+        showEMA200: (req.query.ema_200) ? req.query.ema_200 : false,
+        showIndicatorTable: (req.query.indi_table) ? req.query.indi_table : false,
+        showSupRes: (req.query.supres) ? req.query.supres : false,
+
+    })
+})
+app.get('/e', async (req, res) => {
+    knex('scan').select().then(data => {
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify(data))
+    })
+})
+app.get('/getdata', async (req, res) => {
+    res.setHeader('Content-Type', 'application/json');
+    if (req.query.limit) {
+        if (req.query.name && req.query.timeframe) {
+            knex('scan').where({ name: req.query.name, timeframe: req.query.timeframe }).select().then(data => {
+                let _data = data[0];
+                let result = JSON.parse(_data.result)
+                let limit = parseInt(req.query.limit);
+                let newData = []
+                for (let i = result.length - limit; i < result.length; i++) {
+                    newData.push(result[i])
+                }
+
+                res.send({
+                    id: _data.id,
+                    name: _data.name,
+                    timeframe: _data.timeframe,
+                    result: JSON.stringify(newData)
+                })
+            })
+        } else {
+            knex('scan').select().then(data => {
+
+                for (let a = 0; a < data.length; a++) {
+                    let _data = data[a]
+                    let result = JSON.parse(_data.result)
+                    let limit = parseInt(req.query.limit);
+                    let newData = []
+                    for (let i = result.length - limit; i < result.length; i++) {
+                        newData.push(result[i])
+                    }
+                    data[a].result = JSON.stringify(newData)
+                }
+
+                res.send(data)
+            })
+        }
+    } else {
+        if (req.query.name && req.query.timeframe) {
+            knex('scan').where({ name: req.query.name, timeframe: req.query.timeframe }).select().then(data => {
+                res.send(JSON.stringify(data))
+            })
+        } else {
+            knex('scan').select().then(data => {
+                res.send(JSON.stringify(data))
+            })
+        }
+    }
+
+
+
+
+
+
+})
+app.get('/setconfig', (req, res) => {
+    res.render('config', {
+        timeout,
+        timeframe
+    })
+})
+app.get('/deldata', (req, res) => {
+    knex('scan').del().then(data => {
+        console.log('Delete all table success!,vacum data')
+
+        //run vacum;
+        knex.raw('VACUUM').then(data => {
+            res.send('ok')
+        })
+    });
+})
+app.get('/saveconfig', (req, res) => {
+    timeout = parseFloat(req.query.timeout)
+    timeframe = req.query.timeframe;
+    isNewRun = false
+    isConfigChange = true;
+    res.send('ok')
+})
+app.listen(port, () => {
+    console.log(`Scan app listening on port ${port}`)
+})
+async function getListSupport() {
+
+    //list symbol and percision
+
+    return new Promise(async (resolve, reject) => {
+        let resp = await firestore.collection("list").doc("listScan").get();
+        let result = resp.data();
+        resolve(JSON.parse(result.list))
+    })
+
+}
+async function insertData(data) {
+    return new Promise(async (resolve, reject) => {
+        //làm sạch db
+
+        try {
+            //kiểm tra có tồn tai
+            var name = data.name;
+            var timeframe = data.timeframe;
+            knex.select('name').where({
+                name: data.name,
+                timeframe: data.timeframe
+            }).from('scan').then(data1 => {
+                if (data1.length > 0) {
+                    //update
+                    knex('scan').where({
+                        name: data.name,
+                        timeframe: data.timeframe
+                    }).update({
+                        result: JSON.stringify(data.result)
+                    }).then(data => {
+                        stringLog.push({
+                            name, timeframe, time: new Date()
+                        })
+
+                        resolve('ok')
+                    })
+                } else {
+                    //insert    
+                    knex('scan').insert({
+                        result: JSON.stringify(data.result),
+                        timeframe: data.timeframe,
+                        name: data.name
+                    }).then(data => {
+                        stringLog.push({ name, timeframe, time: new Date() })
+                        resolve('ok')
+                    })
+                }
+            })
+        } catch (err) {
+            console.log(err)
+        }
+    })
+}
+
+//websocket
+
+
+
+

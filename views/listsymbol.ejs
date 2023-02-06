@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <!-- Required meta tags -->
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no" />
+    <meta http-equiv="content-type" content="text/html; charset=UTF-8" />
+
+    <title>My first BootstrapVue app</title>
+
+    <!-- Required Stylesheets -->
+    <link type="text/css" rel="stylesheet" href="bootstrap.min.css" />
+    <link type="text/css" rel="stylesheet" href="bootstrap-vue.css" />
+
+    <!-- Load polyfills to support older browsers -->
+    <script src="https://polyfill.io/v3/polyfill.min.js?features=es2015%2CIntersectionObserver"></script>
+    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"
+        integrity="sha384-/KNQL8Nu5gCHLqwqfQjA689Hhoqgi2S84SNUxC3roTe4EhJ9AfLkp8QiQcU8AMzI"
+        crossorigin="anonymous"></script>
+
+    <!-- Required scripts -->
+
+    <script src="vue.js"></script>
+    <script src="bootstrap-vue.js"></script>
+    <script>
+
+    </script>
+</head>
+
+<body>
+    <!-- Our application root element -->
+
+    <div id="app">
+        <b-container class="text-center">
+
+            <b-overlay :show="show" rounded="sm">
+                <b-row>
+                    <b-col cols="6">
+                        <b-row>
+                            <b-col cols="12" class="mt-5 text-center">
+                                <h1>Add New Symbol</h1>
+                            </b-col>
+                            <b-col cols="8">
+                                <b-input v-model="symbolToAdd" style="text-transform: uppercase;"></b-input>
+                            </b-col>
+                            <b-col cols="4">
+                                <b-button @click="addNewSymbol" block variant="primary" type="button">Add</b-button>
+                            </b-col>
+                            <b-col cols="12">
+
+                                <b-table :items="listSymbol" :fields="fields" bordered class="mt-4">
+                                    <template #cell(index)="data">
+                                        {{ data.index + 1 }}
+                                    </template>
+                                    <template #cell(tool)="data">
+                                        <b-button @click="deleteS(data.item.key)" variant="danger">Delete</b-button>
+                                    </template>
+
+                                </b-table>
+
+                            </b-col>
+                        </b-row>
+                    </b-col>
+                    <b-col cols="6">
+                        <b-row>
+                            <b-col cols="12" class="mt-5 text-center">
+                                <h1>Config : {{window.location.href}}</h1>
+                            </b-col>
+                            <b-col cols="12" class="text-left">
+                                <b-table-simple bordered class="mt-2">
+
+                                    <b-tbody>
+                                        <b-tr>
+                                            <b-td>Timeframe</b-td>
+                                            <b-td><b-input v-model="timeframe"></b-input></b-td>
+                                        </b-tr>
+                                        <b-tr>
+                                            <b-td>Timeout</b-td>
+                                            <b-td><b-input v-model="timeout"></b-input></b-td>
+                                        </b-tr>
+                                        <b-tr>
+                                            <b-td colspan="2">
+                                                <b-button type="button" @click="saveConfig" block
+                                                    variant="success">Save</b-button>
+                                            </b-td>
+                                        </b-tr>
+                                    </b-tbody>
+
+                                </b-table-simple>
+                            </b-col>
+                        </b-row>
+                    </b-col>
+                </b-row>
+            </b-overlay>
+        </b-container>
+
+    </div>
+
+    <!-- Start running your app -->
+    <script>
+
+        window.app = new Vue({
+            el: '#app',
+            data: {
+                name: '',
+                timeframe: null,
+                timeout: null,
+                show: false,
+                listSymbol: [],
+                dataReady: false,
+                symbolToAdd: null,
+                fields: [
+                    { key: 'index', label: 'Stt' },
+                    { key: 'name' },
+                    { key: 'tool', label: 'Tool' },
+
+                ],
+                listConfig: [
+                    {
+                        name: 'rsi',
+                        desc: 'RSI indicator',
+                        isShow: true,
+                        param: 'rsi',
+                        isEdit: true
+                    },
+                    {
+                        name: 'cci',
+                        desc: 'CCI indicator',
+                        isShow: true,
+                        param: 'cci',
+                        isEdit: true
+                    },
+                    {
+                        name: 'bb',
+                        desc: 'BB indicator',
+                        isShow: true,
+                        param: 'bb',
+                        isEdit: false
+                    }
+                ]
+            },
+            methods: {
+                saveConfig() {
+                    if (this.timeframe && this.timeout) {
+                        let url = `saveConfig?timeout=${parseFloat(this.timeout)}&timeframe=${this.timeframe}`;
+                        fetch(url).then(data => {
+                            alert('Change Config success!')
+                            window.location.reload();
+                        })
+                    }
+
+                },
+                deleteS(symbol) {
+                    let url = `https://database.deta.sh/v1/c06pa3r8/listSymbol/items/${symbol}`
+                    let xapikey = 'c06pa3r8_tYCzn4ojPmjnftEM5CxEAKLdg8QGxdh9'
+                    fetch(url, {
+                        method: 'delete',
+                        body: {
+                            key: symbol
+                        },
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'X-API-Key': xapikey
+                        },
+
+                    }).then(response => response.json()).then(data => {
+                        alert('Xóa thành công symbol' + symbol)
+                        this.getListSymbol();
+
+                    })
+                },
+                addNewSymbol() {
+                    if (this.symbolToAdd != "" && this.symbolToAdd) {
+                        let url = 'addlistsymbol?symbol=' + String(this.symbolToAdd).toUpperCase()
+                        console.log(url)
+                        fetch(url).then(data => {
+                            alert('Thêm thành công symbol ' + this.symbolToAdd)
+                            this.symbolToAdd = null;
+                            this.getListSymbol();
+
+                        })
+                    }
+
+                },
+                getListSymbol() {
+                    let url = 'getlistsymbol'
+                    this.show = true;
+                    fetch(url).then(data => data.json()).then(data => {
+                        this.listSymbol = data;
+                        fetch('getConfig').then(data => data.json()).then(data => {
+                            this.timeframe = data.timeframe;
+                            this.timeout = data.timeout;
+                            this.dataReady = true;
+                            this.show = false;
+                        })
+
+                    })
+                }
+            },
+            mounted() {
+                this.getListSymbol();
+            },
+            computed: {
+
+            }
+        })
+    </script>
+</body>
+
+</html>
